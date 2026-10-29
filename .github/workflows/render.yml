@@ -1,6 +1,11 @@
 name: Production worker
 on:
   workflow_dispatch:
+    inputs:
+      groq_check:
+        description: 'Check Groq authentication only; do not write, render or upload'
+        type: boolean
+        default: false
   schedule:
     - cron: '10 6,9,12,15,18 * * *'
 permissions:
@@ -22,8 +27,13 @@ jobs:
           python-version: '3.12'
       - name: Validate the worker without production credentials
         run: python -m unittest -v test_worker
+      - name: Check Groq authentication only
+        if: inputs.groq_check
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        run: python worker.py --check-groq
       - name: Run private production without public content logs
-        if: vars.PRODUCTION_ENABLED == 'true'
+        if: vars.PRODUCTION_ENABLED == 'true' && !inputs.groq_check
         env:
           SOURCE_TOKEN: ${{ secrets.SOURCE_TOKEN }}
           YT_SECRETS: ${{ secrets.YT_SECRETS }}
