@@ -8,11 +8,28 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import urllib.request
 import zipfile
 
 SOURCE = 'https://github.com/Alf0ns4s/shorts-hub.git'
 ALLOWED = ('inbox/', 'state/', 'data/', 'art/')
 MAX_SECRET_ZIP = 2_000_000
+
+
+def verify_groq(key):
+    """Authenticate without generating text, exposing a key, or consuming model tokens."""
+    request = urllib.request.Request('https://api.groq.com/openai/v1/models', headers={
+        'Authorization': 'Bearer ' + key, 'User-Agent': 'shorts-hub-renderer'})
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            data = json.load(response)
+        if not isinstance(data.get('data'), list) or not data['data']:
+            raise ValueError('empty model response')
+    except Exception:
+        print('Groq connection failed; check the encrypted key or provider availability.', flush=True)
+        return False
+    print('Groq connection verified.', flush=True)
+    return True
 
 
 def git_env(token):
@@ -98,10 +115,18 @@ def save_private(repo, log, env):
 
 
 def main():
+    if sys.argv[1:] == ['--check-groq']:
+        key = os.environ.get('GROQ_API_KEY', '')
+        if not key:
+            print('GROQ_API_KEY is not configured.')
+            return 2
+        return 0 if verify_groq(key) else 2
     token = os.environ.get('SOURCE_TOKEN', '')
     credentials = os.environ.get('YT_SECRETS', '')
     if not token or not credentials:
         print('Configuration incomplete: SOURCE_TOKEN and YT_SECRETS are required.')
+        return 2
+    if os.environ.get('GROQ_API_KEY') and not verify_groq(os.environ['GROQ_API_KEY']):
         return 2
     failures = []
     with tempfile.TemporaryDirectory(prefix='production-', dir=os.environ.get('RUNNER_TEMP')) as temp:

@@ -21,6 +21,30 @@ def archive(entries):
 
 
 class WorkerTests(unittest.TestCase):
+    def test_groq_only_mode_does_not_touch_production(self):
+        with patch.object(worker.sys, 'argv', ['worker.py', '--check-groq']), \
+             patch.dict(os.environ, {'GROQ_API_KEY': 'test-key'}, clear=True), \
+             patch.object(worker, 'verify_groq', return_value=True), \
+             patch.object(worker, 'run') as run:
+            self.assertEqual(worker.main(), 0)
+        run.assert_not_called()
+
+    def test_groq_check_authenticates_without_generating_text(self):
+        with patch.object(worker.urllib.request, 'urlopen') as request, \
+             contextlib.redirect_stdout(io.StringIO()) as out:
+            request.return_value.__enter__.return_value = io.BytesIO(b'{"data":[{"id":"model"}]}')
+            self.assertTrue(worker.verify_groq('test-key'))
+        req = request.call_args.args[0]
+        self.assertEqual(req.full_url, 'https://api.groq.com/openai/v1/models')
+        self.assertEqual(req.get_method(), 'GET')
+        self.assertNotIn('test-key', out.getvalue())
+
+    def test_groq_failure_does_not_print_exception_or_key(self):
+        with patch.object(worker.urllib.request, 'urlopen', side_effect=RuntimeError('test-key')), \
+             contextlib.redirect_stdout(io.StringIO()) as out:
+            self.assertFalse(worker.verify_groq('test-key'))
+        self.assertNotIn('test-key', out.getvalue())
+
     def test_expected_credentials_only(self):
         encoded = archive([('client_secret.json', '{}'), ('youtube_deep-sea-files.json', '{}')])
         with tempfile.TemporaryDirectory() as t:
