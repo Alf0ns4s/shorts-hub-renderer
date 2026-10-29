@@ -73,7 +73,9 @@ class WorkerTests(unittest.TestCase):
                 (repo / 'inbox/2026-10-29_deep-sea-files_1.json').write_text('{}')
             return 0
 
-        with patch.dict(os.environ, {'SOURCE_TOKEN': 'repo-secret', 'YT_SECRETS': credentials}, clear=True), \
+        with patch.dict(os.environ, {'SOURCE_TOKEN': 'repo-secret', 'YT_SECRETS': credentials,
+                                    'GITHUB_STEP_SUMMARY': '/public-summary', 'GITHUB_OUTPUT': '/public-output',
+                                    'GITHUB_ENV': '/public-env', 'GITHUB_PATH': '/public-path'}, clear=True), \
              patch.object(worker, 'run', side_effect=fake_run), contextlib.redirect_stdout(io.StringIO()) as out:
             self.assertEqual(worker.main(), 0)
         self.assertNotIn(secret, out.getvalue())
@@ -82,6 +84,8 @@ class WorkerTests(unittest.TestCase):
             if args[:2] == [worker.sys.executable, 'hub.py']:
                 self.assertNotIn('SOURCE_TOKEN', env)
                 self.assertNotIn('YT_SECRETS', env)
+                for name in ('GITHUB_STEP_SUMMARY', 'GITHUB_OUTPUT', 'GITHUB_ENV', 'GITHUB_PATH'):
+                    self.assertNotIn(name, env)
         self.assertTrue(any('cloud' in args for args, _ in calls))
 
 

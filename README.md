@@ -24,6 +24,8 @@ GitHub will not reveal the old secrets' stored values. Source credentials must b
 
 Before enabling the new schedule, disable the old private production/writer workflows so they cannot race the public worker. Transfer other scheduled work separately; this package does not migrate the independent analytics/learning workflows. Keep paid usage budgets at zero; no billing settings are changed by this package.
 
+Production is disabled until the renderer repository variable `PRODUCTION_ENABLED` is set to `true`. Until then, the workflow runs only its offline worker tests. This allows standard public runner startup to be verified before any private access is configured.
+
 ## Processing
 
 The launcher writes missing scripts when Groq is configured, validates channel login availability, downloads the existing voice model, renders authored drawings, and runs the unchanged `hub.py cloud` pipeline. That pipeline retains its existing video QA and scheduling behavior; this worker does not lower its gate. Production state is committed only to the private repository. Public job success does not, by itself, prove any particular video was uploaded: check the private queue and YouTube scheduling results.

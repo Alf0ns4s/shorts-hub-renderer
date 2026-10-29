@@ -113,7 +113,8 @@ def main():
             unpack_credentials(credentials, repo / 'secrets')
             # Do not give the render/writer subprocess the repository access token.
             child = os.environ.copy()
-            for name in ('SOURCE_TOKEN', 'YT_SECRETS', 'GITHUB_TOKEN', 'GH_TOKEN'):
+            for name in ('SOURCE_TOKEN', 'YT_SECRETS', 'GITHUB_TOKEN', 'GH_TOKEN',
+                         'GITHUB_STEP_SUMMARY', 'GITHUB_OUTPUT', 'GITHUB_ENV', 'GITHUB_PATH'):
                 child.pop(name, None)
             child['SHORTS_OUTPUT_DIR'] = 'state'
             child['PYTHONDONTWRITEBYTECODE'] = '1'
