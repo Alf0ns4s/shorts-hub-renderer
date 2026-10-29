@@ -1,0 +1,31 @@
+name: Production worker
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '10 6,9,12,15,18 * * *'
+permissions:
+  contents: read
+concurrency:
+  group: production-worker
+  cancel-in-progress: false
+jobs:
+  produce:
+    if: github.repository == 'Alf0ns4s/shorts-hub-renderer' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Run private production without public content logs
+        env:
+          SOURCE_TOKEN: ${{ secrets.SOURCE_TOKEN }}
+          YT_SECRETS: ${{ secrets.YT_SECRETS }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          PAGES_TOKEN: ${{ secrets.PAGES_TOKEN }}
+          PYTHONIOENCODING: utf-8
+        run: python worker.py
+# No pull_request, pull_request_target, public artifacts, or private-data caches.
