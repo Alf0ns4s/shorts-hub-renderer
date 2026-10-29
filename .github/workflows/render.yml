@@ -20,7 +20,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Validate the worker without production credentials
+        run: python -m unittest -v test_worker
       - name: Run private production without public content logs
+        if: vars.PRODUCTION_ENABLED == 'true'
         env:
           SOURCE_TOKEN: ${{ secrets.SOURCE_TOKEN }}
           YT_SECRETS: ${{ secrets.YT_SECRETS }}
