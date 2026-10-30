@@ -4,7 +4,7 @@ This repository contains a generic production launcher, not the private Shorts H
 
 ## Public contents
 
-- `.github/workflows/render.yml`: standard Ubuntu job, owner/default-branch guard, five daily runs plus manual run.
+- `.github/workflows/render.yml`: standard Ubuntu job, owner/default-branch guard, hourly recovery runs plus manual run.
 - `worker.py`: private checkout, credential validation, private subprocess logs, ordinary production commands, private state save.
 - `test_worker.py`: offline checks with fake credentials and a simulated production pass.
 - `.gitignore` and this README.
@@ -39,4 +39,4 @@ Standard public-repository hosted runner compute is free under GitHub's document
 3. Configure the repository and secrets, disable competing private writers/renderers, then manually run the worker.
 4. Confirm runner startup, Deep Sea render QA, saved private state, and the actual YouTube publication time. Do not call the migration complete before those checks.
 
-Known limits: no production test has run yet; private logs are intentionally not exported to the public job. Failed state pushes require investigation before repeating an upload. Review failed private queue/QA records; do not assume a green workflow means audience engagement or guaranteed publication.
+Known limits: no production test has run yet; redacted diagnostics are saved to private state/worker/latest.log, never exported to the public job. Failed state pushes require investigation before repeating an upload. Review failed private queue/QA records; do not assume a green workflow means audience engagement or guaranteed publication.

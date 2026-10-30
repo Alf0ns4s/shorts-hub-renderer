@@ -4,6 +4,8 @@ import datetime
 import io
 import json
 import os
+import re
+from zoneinfo import ZoneInfo
 from pathlib import Path
 import subprocess
 import sys
@@ -114,6 +116,29 @@ def save_private(repo, log, env):
     run(['git', 'push', 'origin', 'HEAD:main'], repo, log, env)
 
 
+def save_diagnostics(repo, log, failures, stage):
+    """Keep useful failure output only in the private production repository."""
+    log.flush()
+    text = Path(log.name).read_text(encoding='utf-8', errors='replace')[-120000:]
+    secret_values = [os.environ.get(k, '') for k in ('SOURCE_TOKEN','YT_SECRETS','GROQ_API_KEY','PAGES_TOKEN')]
+    for path in (repo / 'secrets').glob('*.json'):
+        try:
+            value = json.loads(path.read_text(encoding='utf-8'))
+            if isinstance(value, dict):
+                secret_values.extend(str(v) for k,v in value.items() if k in ('token','refresh_token','client_secret'))
+        except (ValueError, OSError):
+            pass
+    for value in secret_values:
+        if value:
+            text = text.replace(value, '[REDACTED]')
+    text = re.sub(r'(?:gsk_|github_pat_|gh[pousr]_)[A-Za-z0-9_]+', '[REDACTED]', text)
+    target = repo / 'state' / 'worker'
+    target.mkdir(parents=True, exist_ok=True)
+    (target / 'latest.log').write_text(text, encoding='utf-8')
+    (target / 'latest.json').write_text(json.dumps({'updated':datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                                                 'stage':stage,'failures':failures},indent=2),encoding='utf-8')
+
+
 def main():
     if sys.argv[1:] == ['--check-groq']:
         key = os.environ.get('GROQ_API_KEY', '')
@@ -143,18 +168,29 @@ def main():
                 child.pop(name, None)
             child['SHORTS_OUTPUT_DIR'] = 'state'
             child['PYTHONDONTWRITEBYTECODE'] = '1'
+            stage = 'dependencies'
             try:
+                print('Preparing production dependencies.', flush=True)
                 run([sys.executable, '-m', 'pip', 'install', '-r', 'requirements.txt'], repo, log, child)
+                stage = 'source checks'
+                run([sys.executable, '-m', 'unittest', 'discover', '-s', 'tools', '-p', 'test_*.py', '-q'], repo, log, child)
+                stage = 'writing'
                 if child.get('GROQ_API_KEY'):
+                    print('Writing and validating missing scripts.', flush=True)
                     if run([sys.executable, 'tools/local_writer.py', '--backend', 'groq'], repo, log, child, check=False):
                         failures.append('writing')
+                # Save valid scripts and writer diagnostics before a long render.
+                save_diagnostics(repo, log, failures, stage)
+                save_private(repo, log, env)
                 # Refuse to render a pending channel without its existing upload login.
                 for channel in pending_channels(repo):
                     if not (repo / 'secrets' / f'youtube_{channel}.json').is_file():
                         raise RuntimeError('missing channel upload credentials')
+                stage = 'rendering'
                 if pending_channels(repo):
+                    print('Rendering and testing approved scripts.', flush=True)
                     run([sys.executable, 'hub.py', 'setup'], repo, log, child)
-                    today = datetime.datetime.now(datetime.timezone.utc).date()
+                    today = datetime.datetime.now(ZoneInfo('Europe/Vilnius')).date()
                     drawings = []
                     for day in (today, today - datetime.timedelta(days=1)):
                         drawings += sorted((repo / 'art/src/daily' / day.isoformat()).glob('draw_*.py'))
@@ -165,9 +201,11 @@ def main():
                 # The dashboard export stays in the existing configured destination.
                 if child.get('PAGES_TOKEN'):
                     run(['bash', 'tools/publish_dashboard.sh'], repo, log, child)
-            except Exception:
-                failures.append('production')
+            except Exception as error:
+                failures.append(stage + ':' + type(error).__name__)
             finally:
+                save_diagnostics(repo, log, failures, stage)
+                print('Saving production results privately.', flush=True)
                 save_private(repo, log, env)
     if failures:
         print('Production incomplete. Review private inbox/state; no content was printed here.')

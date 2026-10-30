@@ -21,6 +21,19 @@ def archive(entries):
 
 
 class WorkerTests(unittest.TestCase):
+    def test_diagnostics_are_private_and_redacted(self):
+        with tempfile.TemporaryDirectory() as t:
+            root=Path(t);repo=root/'source';repo.mkdir()
+            with (root/'private.log').open('wb') as log:
+                log.write(b'FAILED scene 2: invalid motion; gsk_privatekey123 secret-value')
+                with patch.dict(os.environ,{'SOURCE_TOKEN':'secret-value'}):
+                    worker.save_diagnostics(repo,log,['writing'],'writing')
+            text=(repo/'state/worker/latest.log').read_text()
+            self.assertIn('invalid motion',text)
+            self.assertNotIn('gsk_privatekey123',text)
+            self.assertNotIn('secret-value',text)
+
+
     def test_groq_only_mode_does_not_touch_production(self):
         with patch.object(worker.sys, 'argv', ['worker.py', '--check-groq']), \
              patch.dict(os.environ, {'GROQ_API_KEY': 'test-key'}, clear=True), \
