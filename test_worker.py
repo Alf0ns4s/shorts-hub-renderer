@@ -124,6 +124,10 @@ class WorkerTests(unittest.TestCase):
                 for name in ('GITHUB_STEP_SUMMARY', 'GITHUB_OUTPUT', 'GITHUB_ENV', 'GITHUB_PATH'):
                     self.assertNotIn(name, env)
         self.assertTrue(any('cloud' in args for args, _ in calls))
+        dashboard=[env for args,env in calls if args==['bash','tools/publish_dashboard.sh']]
+        self.assertEqual(len(dashboard),1)
+        self.assertEqual(dashboard[0]['PAGES_TOKEN'],'repo-secret')
+        self.assertNotIn('GROQ_API_KEY',dashboard[0])
 
 
 if __name__ == '__main__':

@@ -198,9 +198,15 @@ def main():
                         run([sys.executable, 'tools/render_art.py', *[str(p.relative_to(repo)) for p in drawings]], repo, log, child)
                     if run([sys.executable, 'hub.py', 'cloud'], repo, log, child, check=False):
                         failures.append('video processing')
-                # The dashboard export stays in the existing configured destination.
-                if child.get('PAGES_TOKEN'):
-                    run(['bash', 'tools/publish_dashboard.sh'], repo, log, child)
+                # Refresh the existing dashboard with a dedicated environment. The writer
+                # and renderer never receive the repository credential.
+                stage = 'dashboard'
+                dashboard = child.copy()
+                dashboard.pop('GROQ_API_KEY', None)
+                dashboard['PAGES_TOKEN'] = os.environ.get('PAGES_TOKEN') or token
+                dashboard['GH_TOKEN'] = token
+                if run(['bash', 'tools/publish_dashboard.sh'], repo, log, dashboard, check=False):
+                    failures.append('dashboard refresh')
             except Exception as error:
                 failures.append(stage + ':' + type(error).__name__)
             finally:
