@@ -123,12 +123,29 @@ class WorkerTests(unittest.TestCase):
                 self.assertNotIn('YT_SECRETS', env)
                 for name in ('GITHUB_STEP_SUMMARY', 'GITHUB_OUTPUT', 'GITHUB_ENV', 'GITHUB_PATH'):
                     self.assertNotIn(name, env)
-        self.assertTrue(any('cloud' in args for args, _ in calls))
+        self.assertTrue(any(args==[worker.sys.executable,'hub.py','cloud','--channel','deep-sea-files'] for args,_ in calls))
+        cloud_index=next(i for i,(args,_) in enumerate(calls) if 'cloud' in args)
+        self.assertTrue(any(args[:3]==['git','add','-A'] for args,_ in calls[cloud_index+1:]))
         dashboard=[env for args,env in calls if args==['bash','tools/publish_dashboard.sh']]
         self.assertEqual(len(dashboard),1)
         self.assertEqual(dashboard[0]['PAGES_TOKEN'],'repo-secret')
         self.assertNotIn('GROQ_API_KEY',dashboard[0])
 
+
+class IncrementalUploads(unittest.TestCase):
+    def test_each_channel_is_checkpointed_before_the_next_render(self):
+        events=[]
+        def fake_run(args,cwd,log,env=None,**kwargs):
+            if args[:2]==['git','clone']:
+                inbox=Path(args[-1])/'inbox';inbox.mkdir(parents=True)
+                for cid in ('a','b'):(inbox/f'2026-10-30_{cid}_1.json').write_text('{}')
+            if args[:3]==[worker.sys.executable,'hub.py','cloud']:events.append(args[-1])
+            return 0
+        credentials=archive([('youtube_a.json','{}'),('youtube_b.json','{}')])
+        with patch.dict(os.environ,{'SOURCE_TOKEN':'test','YT_SECRETS':credentials},clear=True),patch.object(worker,'run',side_effect=fake_run),patch.object(worker,'save_private',side_effect=lambda *args:events.append('save')),contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(worker.main(),0)
+        first=events.index('a');second=events.index('b')
+        self.assertIn('save',events[first+1:second])
 
 if __name__ == '__main__':
     unittest.main()

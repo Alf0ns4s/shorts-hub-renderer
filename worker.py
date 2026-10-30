@@ -196,8 +196,14 @@ def main():
                         drawings += sorted((repo / 'art/src/daily' / day.isoformat()).glob('draw_*.py'))
                     if drawings:
                         run([sys.executable, 'tools/render_art.py', *[str(p.relative_to(repo)) for p in drawings]], repo, log, child)
-                    if run([sys.executable, 'hub.py', 'cloud'], repo, log, child, check=False):
-                        failures.append('video processing')
+                    # Finish, upload and persist each channel before rendering the next.
+                    # A long episode must not hold a completed Short past its posting slot.
+                    for channel in pending_channels(repo):
+                        stage = 'rendering ' + channel
+                        if run([sys.executable, 'hub.py', 'cloud', '--channel', channel], repo, log, child, check=False):
+                            failures.append('video processing ' + channel)
+                        save_diagnostics(repo, log, failures, stage)
+                        save_private(repo, log, env)
                 # Refresh the existing dashboard with a dedicated environment. The writer
                 # and renderer never receive the repository credential.
                 stage = 'dashboard'
