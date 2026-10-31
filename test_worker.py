@@ -147,5 +147,40 @@ class IncrementalUploads(unittest.TestCase):
         first=events.index('a');second=events.index('b')
         self.assertIn('save',events[first+1:second])
 
+
+class CatchUpTests(unittest.TestCase):
+    def test_delayed_wakeup_writes_and_uploads_four_channels_in_order(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo=Path(td);(repo/'inbox').mkdir();(repo/'secrets').mkdir()
+            events=[];attempts={}
+            def fake_run(args,cwd,log,env=None,**kwargs):
+                if 'tools/local_writer.py' in args:
+                    cid=str(len(attempts));attempts[cid]='attempted'
+                    (repo/f'secrets/youtube_{cid}.json').write_text('{}')
+                    (repo/f'inbox/2026-10-31_{cid}_1.json').write_text('{}')
+                    events.append('write '+cid)
+                if 'cloud' in args:
+                    cid=args[-1];events.append('upload '+cid)
+                    (repo/f'inbox/2026-10-31_{cid}_1.json').unlink()
+                return 0
+            with (repo/'log').open('wb') as log,patch.object(worker,'run',side_effect=fake_run),patch.object(worker,'writer_attempts',side_effect=lambda _:dict(attempts)),patch.object(worker,'save_diagnostics'),patch.object(worker,'save_private',side_effect=lambda *a:events.append('save')),contextlib.redirect_stdout(io.StringIO()):
+                worker.catch_up(repo,log,{}, {},[],True)
+            self.assertEqual([e for e in events if e.startswith(('write','upload'))],sum(([f'write {i}',f'upload {i}'] for i in range(4)),[]))
+            self.assertIn('save',events[events.index('upload 0')+1:events.index('write 1')])
+
+    def test_quota_or_audience_wait_does_not_spin(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo=Path(td)
+            with (repo/'log').open('wb') as log,patch.object(worker,'run',return_value=0) as run,patch.object(worker,'save_diagnostics'),patch.object(worker,'save_private'),contextlib.redirect_stdout(io.StringIO()):
+                worker.catch_up(repo,log,{}, {},[],True)
+            self.assertEqual(run.call_count,1)
+
+    def test_no_new_changes_still_retries_private_push(self):
+        calls=[]
+        with tempfile.TemporaryDirectory() as td,patch.object(worker,'run',side_effect=lambda args,*a,**k:calls.append(args) or 0):
+            worker.save_private(Path(td),None,{})
+        self.assertIn(['git','push','origin','HEAD:main'],calls)
+        self.assertFalse(any('commit' in args for args in calls))
+
 if __name__ == '__main__':
     unittest.main()

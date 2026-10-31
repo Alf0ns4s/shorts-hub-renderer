@@ -40,3 +40,35 @@ Standard public-repository hosted runner compute is free under GitHub's document
 4. Confirm runner startup, Deep Sea render QA, saved private state, and the actual YouTube publication time. Do not call the migration complete before those checks.
 
 Known limits: no production test has run yet; redacted diagnostics are saved to private state/worker/latest.log, never exported to the public job. Failed state pushes require investigation before repeating an upload. Review failed private queue/QA records; do not assume a green workflow means audience engagement or guaranteed publication.
+
+
+### Delayed-run recovery
+Each wakeup performs at most four normal writer/render/upload passes, with a
+100-minute catch-up window checked between passes (the workflow hard limit is
+150 minutes). Each writer subprocess retains its 12-request cap: at most 48
+requests per wakeup, always subject to Groq's free limits and persisted waits.
+A ready inbox is drained first. Upload/checkpoint happens after each channel.
+Provider authentication trouble does not discard or prevent existing scripts
+from rendering. A green workflow is not proof of complete channel coverage;
+check the private dashboard's actual uploaded reserve and blockers.
+
+### Optional independent free wakeup (not configured by this commit)
+GitHub schedules are best effort and can be delayed or dropped. A separate
+cron-job.org timer can POST the existing workflow_dispatch endpoint hourly:
+
+- URL: https://api.github.com/repos/Alf0ns4s/shorts-hub-renderer/actions/workflows/render.yml/dispatches
+- Method: POST
+- Body: {"ref":"main"}
+- Content-Type: application/json
+- Accept: application/vnd.github+json
+- X-GitHub-Api-Version: 2022-11-28
+- Authorization: Bearer <dedicated fine-grained token>
+- Token repository: ONLY shorts-hub-renderer; Actions write, no private-repo access.
+- Schedule: hourly at minute 43 (UTC); alert on non-2xx responses.
+
+The owner must create/connect the timer account and enter its dedicated token
+there. Never copy SOURCE_TOKEN, YouTube credentials or GROQ_API_KEY to the timer.
+A successful HTTP response means GitHub accepted the dispatch, not that a video
+passed QA or uploaded. Existing workflow concurrency serializes both triggers.
+Official sources: https://cron-job.org/en/ and
+https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule

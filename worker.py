@@ -10,6 +10,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.request
 import zipfile
 
@@ -106,11 +107,11 @@ def save_private(repo, log, env):
     # Extra protection even if the private .gitignore changes.
     run(['git', 'reset', '-q', '--', 'secrets', 'logs', '*.mp4', '*.wav', '*.zip'], repo, log, env)
     changed = run(['git', 'diff', '--cached', '--quiet'], repo, log, env, check=False)
-    if changed == 0:
-        return
-    if changed != 1:
+    if changed not in (0, 1):
         raise RuntimeError('cannot inspect private changes')
-    run(['git', 'commit', '-q', '-m', 'Production worker: save rendered results'], repo, log, env)
+    if changed == 1:
+        run(['git', 'commit', '-q', '-m', 'Production worker: save rendered results'], repo, log, env)
+    # Retry an earlier unpushed checkpoint even when no new files changed.
     # Never resolve competing production state by choosing one side automatically.
     run(['git', 'pull', '--rebase', 'origin', 'main'], repo, log, env)
     run(['git', 'push', 'origin', 'HEAD:main'], repo, log, env)
@@ -139,6 +140,64 @@ def save_diagnostics(repo, log, failures, stage):
                                                  'stage':stage,'failures':failures},indent=2),encoding='utf-8')
 
 
+def writer_attempts(repo):
+    try:
+        records = json.loads((repo / 'state/writer/production.json').read_text())['channels']
+        return {cid: row.get('attempted') for cid, row in records.items()}
+    except (OSError, ValueError, KeyError, TypeError):
+        return {}
+
+
+def catch_up(repo, log, env, child, failures, writer_available):
+    """At most four ordinary 12-call writer passes; upload between passes.
+
+    Provider cooldowns, QA gates, real buffer coverage and audience waits remain
+    owned by the private pipeline. No parallel production or quota bypass.
+    """
+    deadline = time.monotonic() + 100 * 60
+    setup_done = False
+    for batch in range(4):
+        if time.monotonic() >= deadline:
+            break
+        before = writer_attempts(repo)
+        queued = pending_channels(repo)
+        if writer_available:
+            print('Writing and validating missing scripts.', flush=True)
+            if run([sys.executable, 'tools/local_writer.py', '--backend', 'groq'], repo, log, child, check=False):
+                failures.append('writing')
+        save_diagnostics(repo, log, failures, 'writing')
+        save_private(repo, log, env)
+        pending = pending_channels(repo)
+        for channel in pending:
+            if not (repo / 'secrets' / f'youtube_{channel}.json').is_file():
+                raise RuntimeError('missing channel upload credentials')
+        if pending:
+            if not setup_done:
+                run([sys.executable, 'hub.py', 'setup'], repo, log, child)
+                setup_done = True
+            today = datetime.datetime.now(ZoneInfo('Europe/Vilnius')).date()
+            drawings = []
+            for day in (today, today - datetime.timedelta(days=1)):
+                drawings += sorted((repo / 'art/src/daily' / day.isoformat()).glob('draw_*.py'))
+            if drawings:
+                run([sys.executable, 'tools/render_art.py', *[str(p.relative_to(repo)) for p in drawings]], repo, log, child)
+            for channel in pending:
+                stage = 'rendering ' + channel
+                save_diagnostics(repo, log, failures, stage)
+                save_private(repo, log, env)
+                if run([sys.executable, 'hub.py', 'cloud', '--channel', channel], repo, log, child, check=False):
+                    failures.append('video processing ' + channel)
+                save_diagnostics(repo, log, failures, stage)
+                save_private(repo, log, env)
+        # No eligible channel attempted and no old inbox to drain: buffers are
+        # full or work is explicitly paused. Do not spin through empty passes.
+        if not writer_available or (not queued and before == writer_attempts(repo)):
+            break
+        # Never re-render an unchanged inbox after a processing failure.
+        if set(pending) & set(pending_channels(repo)):
+            break
+
+
 def main():
     if sys.argv[1:] == ['--check-groq']:
         key = os.environ.get('GROQ_API_KEY', '')
@@ -151,9 +210,8 @@ def main():
     if not token or not credentials:
         print('Configuration incomplete: SOURCE_TOKEN and YT_SECRETS are required.')
         return 2
-    if os.environ.get('GROQ_API_KEY') and not verify_groq(os.environ['GROQ_API_KEY']):
-        return 2
-    failures = []
+    writer_available = bool(os.environ.get('GROQ_API_KEY')) and verify_groq(os.environ['GROQ_API_KEY'])
+    failures = ['writer authentication unavailable'] if os.environ.get('GROQ_API_KEY') and not writer_available else []
     with tempfile.TemporaryDirectory(prefix='production-', dir=os.environ.get('RUNNER_TEMP')) as temp:
         root = Path(temp)
         repo = root / 'source'
@@ -174,36 +232,8 @@ def main():
                 run([sys.executable, '-m', 'pip', 'install', '-r', 'requirements.txt'], repo, log, child)
                 stage = 'source checks'
                 run([sys.executable, '-m', 'unittest', 'discover', '-s', 'tools', '-p', 'test_*.py', '-q'], repo, log, child)
-                stage = 'writing'
-                if child.get('GROQ_API_KEY'):
-                    print('Writing and validating missing scripts.', flush=True)
-                    if run([sys.executable, 'tools/local_writer.py', '--backend', 'groq'], repo, log, child, check=False):
-                        failures.append('writing')
-                # Save valid scripts and writer diagnostics before a long render.
-                save_diagnostics(repo, log, failures, stage)
-                save_private(repo, log, env)
-                # Refuse to render a pending channel without its existing upload login.
-                for channel in pending_channels(repo):
-                    if not (repo / 'secrets' / f'youtube_{channel}.json').is_file():
-                        raise RuntimeError('missing channel upload credentials')
-                stage = 'rendering'
-                if pending_channels(repo):
-                    print('Rendering and testing approved scripts.', flush=True)
-                    run([sys.executable, 'hub.py', 'setup'], repo, log, child)
-                    today = datetime.datetime.now(ZoneInfo('Europe/Vilnius')).date()
-                    drawings = []
-                    for day in (today, today - datetime.timedelta(days=1)):
-                        drawings += sorted((repo / 'art/src/daily' / day.isoformat()).glob('draw_*.py'))
-                    if drawings:
-                        run([sys.executable, 'tools/render_art.py', *[str(p.relative_to(repo)) for p in drawings]], repo, log, child)
-                    # Finish, upload and persist each channel before rendering the next.
-                    # A long episode must not hold a completed Short past its posting slot.
-                    for channel in pending_channels(repo):
-                        stage = 'rendering ' + channel
-                        if run([sys.executable, 'hub.py', 'cloud', '--channel', channel], repo, log, child, check=False):
-                            failures.append('video processing ' + channel)
-                        save_diagnostics(repo, log, failures, stage)
-                        save_private(repo, log, env)
+                stage = 'catch-up production'
+                catch_up(repo, log, env, child, failures, writer_available)
                 # Refresh the existing dashboard with a dedicated environment. The writer
                 # and renderer never receive the repository credential.
                 stage = 'dashboard'
