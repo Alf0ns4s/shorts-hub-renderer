@@ -148,6 +148,13 @@ def writer_attempts(repo):
         return {}
 
 
+def cloud_writer_primary(repo):
+    try:
+        return json.loads((repo / 'work/cloud-writer/config.json').read_text()).get('mode') == 'cloud'
+    except (OSError, ValueError, AttributeError):
+        return False
+
+
 def catch_up(repo, log, env, child, failures, writer_available):
     """At most four ordinary 12-call writer passes; upload between passes.
 
@@ -161,7 +168,7 @@ def catch_up(repo, log, env, child, failures, writer_available):
             break
         before = writer_attempts(repo)
         queued = pending_channels(repo)
-        if writer_available:
+        if writer_available or (repo / 'tools/cloud_writer.py').is_file():
             print('Writing and validating missing scripts.', flush=True)
             if run([sys.executable, 'tools/local_writer.py', '--backend', 'groq'], repo, log, child, check=False):
                 failures.append('writing')
@@ -210,14 +217,20 @@ def main():
     if not token or not credentials:
         print('Configuration incomplete: SOURCE_TOKEN and YT_SECRETS are required.')
         return 2
-    writer_available = bool(os.environ.get('GROQ_API_KEY')) and verify_groq(os.environ['GROQ_API_KEY'])
-    failures = ['writer authentication unavailable'] if os.environ.get('GROQ_API_KEY') and not writer_available else []
+    writer_available = False
+    failures = []
     with tempfile.TemporaryDirectory(prefix='production-', dir=os.environ.get('RUNNER_TEMP')) as temp:
         root = Path(temp)
         repo = root / 'source'
         env = git_env(token)
         with (root / 'private.log').open('wb') as log:
             run(['git', 'clone', '--depth', '1', '--branch', 'main', SOURCE, str(repo)], root, log, env)
+            # Cloud prose is validated even without a model-provider key. In
+            # primary cloud mode there is no Groq dependency or authentication call.
+            if not cloud_writer_primary(repo):
+                writer_available = bool(os.environ.get('GROQ_API_KEY')) and verify_groq(os.environ['GROQ_API_KEY'])
+                if os.environ.get('GROQ_API_KEY') and not writer_available:
+                    failures.append('writer authentication unavailable')
             unpack_credentials(credentials, repo / 'secrets')
             # Do not give the render/writer subprocess the repository access token.
             child = os.environ.copy()
@@ -226,6 +239,7 @@ def main():
                 child.pop(name, None)
             child['SHORTS_OUTPUT_DIR'] = 'state'
             child['PYTHONDONTWRITEBYTECODE'] = '1'
+            child['SHORTS_GROQ_AVAILABLE'] = '1' if writer_available else '0'
             stage = 'dependencies'
             try:
                 print('Preparing production dependencies.', flush=True)

@@ -149,6 +149,26 @@ class IncrementalUploads(unittest.TestCase):
 
 
 class CatchUpTests(unittest.TestCase):
+    def test_cloud_handoff_validation_runs_without_groq(self):
+        with tempfile.TemporaryDirectory() as td:
+            repo=Path(td);(repo/'tools').mkdir();(repo/'tools/cloud_writer.py').write_text('')
+            with (repo/'log').open('wb') as log,patch.object(worker,'run',return_value=0) as run,patch.object(worker,'save_diagnostics'),patch.object(worker,'save_private'),contextlib.redirect_stdout(io.StringIO()):
+                worker.catch_up(repo,log,{}, {},[],False)
+            self.assertEqual([c.args[0] for c in run.call_args_list],[[worker.sys.executable,'tools/local_writer.py','--backend','groq']])
+
+    def test_primary_cloud_mode_needs_no_groq_key_or_authentication(self):
+        def fake_run(args,cwd,log,env=None,**kwargs):
+            if args[:2]==['git','clone']:
+                repo=Path(args[-1]);(repo/'tools').mkdir(parents=True)
+                (repo/'tools/cloud_writer.py').write_text('')
+                (repo/'work/cloud-writer').mkdir(parents=True)
+                (repo/'work/cloud-writer/config.json').write_text('{"mode":"cloud"}')
+            return 0
+        credentials=archive([('youtube_a.json','{}')])
+        with patch.dict(os.environ,{'SOURCE_TOKEN':'test','YT_SECRETS':credentials,'GROQ_API_KEY':'expired'},clear=True),patch.object(worker,'run',side_effect=fake_run),patch.object(worker,'verify_groq') as auth,contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(worker.main(),0)
+        auth.assert_not_called()
+
     def test_delayed_wakeup_writes_and_uploads_four_channels_in_order(self):
         with tempfile.TemporaryDirectory() as td:
             repo=Path(td);(repo/'inbox').mkdir();(repo/'secrets').mkdir()
