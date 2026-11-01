@@ -157,7 +157,9 @@ class CatchUpTests(unittest.TestCase):
             self.assertEqual([c.args[0] for c in run.call_args_list],[[worker.sys.executable,'tools/local_writer.py','--backend','groq']])
 
     def test_primary_cloud_mode_needs_no_groq_key_or_authentication(self):
+        calls=[]
         def fake_run(args,cwd,log,env=None,**kwargs):
+            calls.append((args,env))
             if args[:2]==['git','clone']:
                 repo=Path(args[-1]);(repo/'tools').mkdir(parents=True)
                 (repo/'tools/cloud_writer.py').write_text('')
@@ -168,6 +170,10 @@ class CatchUpTests(unittest.TestCase):
         with patch.dict(os.environ,{'SOURCE_TOKEN':'test','YT_SECRETS':credentials,'GROQ_API_KEY':'expired'},clear=True),patch.object(worker,'run',side_effect=fake_run),patch.object(worker,'verify_groq') as auth,contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(worker.main(),0)
         auth.assert_not_called()
+        checks=[env for args,env in calls if 'unittest' in args]
+        self.assertNotIn('SHORTS_GROQ_AVAILABLE',checks[0])
+        writers=[env for args,env in calls if 'tools/local_writer.py' in args]
+        self.assertEqual(writers[0]['SHORTS_GROQ_AVAILABLE'],'0')
 
     def test_delayed_wakeup_writes_and_uploads_four_channels_in_order(self):
         with tempfile.TemporaryDirectory() as td:

@@ -170,7 +170,9 @@ def catch_up(repo, log, env, child, failures, writer_available):
         queued = pending_channels(repo)
         if writer_available or (repo / 'tools/cloud_writer.py').is_file():
             print('Writing and validating missing scripts.', flush=True)
-            if run([sys.executable, 'tools/local_writer.py', '--backend', 'groq'], repo, log, child, check=False):
+            writing = child.copy()
+            writing['SHORTS_GROQ_AVAILABLE'] = '1' if writer_available else '0'
+            if run([sys.executable, 'tools/local_writer.py', '--backend', 'groq'], repo, log, writing, check=False):
                 failures.append('writing')
         save_diagnostics(repo, log, failures, 'writing')
         save_private(repo, log, env)
@@ -239,7 +241,6 @@ def main():
                 child.pop(name, None)
             child['SHORTS_OUTPUT_DIR'] = 'state'
             child['PYTHONDONTWRITEBYTECODE'] = '1'
-            child['SHORTS_GROQ_AVAILABLE'] = '1' if writer_available else '0'
             stage = 'dependencies'
             try:
                 print('Preparing production dependencies.', flush=True)
