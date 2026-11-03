@@ -1,0 +1,30 @@
+name: Private hybrid preview
+on:
+  push:
+    branches: [main]
+    paths: [hybrid_preview.py, .github/workflows/hybrid-preview.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: hybrid-preview
+  cancel-in-progress: false
+jobs:
+  preview:
+    if: github.repository == 'Alf0ns4s/shorts-hub-renderer' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install native composition dependencies
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg libcairo2
+      - name: Check private source without YouTube credentials or public artifacts
+        env:
+          SOURCE_TOKEN: ${{ secrets.SOURCE_TOKEN }}
+          PREVIEW_SOURCE_REF: feature/playful-hybrid-v1
+        run: python hybrid_preview.py
